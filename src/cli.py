@@ -1,10 +1,12 @@
 """
-ToDoT CLI - 이미지/동영상을 도트, ASCII, 한글, 유니코드 아트로 변환
+ToDoT CLI - 이미지/동영상 아트 변환 도구
 
 사용 예시:
     python src/cli.py input.png -o output.png --mode pixel --pixel-size 8 --colors 16
+    python src/cli.py photo.jpg --mode pixel_dither --pixel-size 10
+    python src/cli.py image.png --mode pixel_palette --palette "Game Boy"
     python src/cli.py video.mp4 -o result.mp4 --mode ascii --pixel-size 12
-    python src/cli.py image.jpg --mode hangul --grid
+    python src/cli.py input.png --mode composite --composite-modes pixel ascii hangul
 """
 import argparse
 import os
@@ -17,12 +19,13 @@ import cv2
 import numpy as np
 from converter import (
     convert_single_frame, pixelize_image,
-    is_image, is_video, MODE_KEYS,
-    IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
+    is_image, is_video, ALL_MODE_KEYS, PALETTE_NAMES,
+    IMAGE_EXTENSIONS, VIDEO_EXTENSIONS,
 )
 
 
 def parse_args():
+    all_choices = ALL_MODE_KEYS + ["composite"]
     parser = argparse.ArgumentParser(
         prog="todot",
         description="ToDoT - 이미지/동영상을 도트, ASCII, 한글, 유니코드 아트로 변환하는 CLI 도구",
@@ -30,14 +33,21 @@ def parse_args():
     parser.add_argument("input", help="입력 파일 경로 (이미지 또는 동영상)")
     parser.add_argument("-o", "--output", help="출력 파일 경로 (미지정 시 자동 생성)")
     parser.add_argument(
-        "-m", "--mode", choices=MODE_KEYS, default="pixel",
-        help="변환 모드 (기본값: pixel)"
+        "-m", "--mode", choices=all_choices, default="pixel",
+        help="변환 모드 (기본값: pixel)",
     )
-    parser.add_argument("-p", "--pixel-size", type=int, default=8, help="픽셀 크기 (기본값: 8)")
-    parser.add_argument("-c", "--colors", type=int, default=16, help="색상 수 (기본값: 16)")
-    parser.add_argument("--grid", action="store_true", help="격자선 표시")
-    parser.add_argument("--outline", action="store_true", help="윤곽선 강조")
+    parser.add_argument("-p", "--pixel-size", type=int, default=8,
+                        help="픽셀/블록 크기 (기본값: 8)")
+    parser.add_argument("-c", "--colors", type=int, default=16,
+                        help="색상 수 (기본값: 16, K-means/dither/edge/superpixel 모드)")
+    parser.add_argument("--grid", action="store_true", help="격자선 표시 (픽셀 모드)")
+    parser.add_argument("--outline", action="store_true", help="윤곽선 강조 (K-means 모드)")
     parser.add_argument("--output-dir", default=None, help="출력 폴더 (미지정 시 입력 파일 위치)")
+    parser.add_argument("--palette", default="PICO-8",
+                        help=f"팔레트 이름 (pixel_palette 모드). 선택: {', '.join(PALETTE_NAMES)}")
+    parser.add_argument("--composite-modes", nargs=3, metavar="MODE",
+                        default=["pixel", "ascii", "hangul"],
+                        help="복합 모드의 3개 변환 모드 (우상단 좌하단 우하단)")
     return parser.parse_args()
 
 
@@ -58,6 +68,15 @@ def generate_output_path(input_path, mode, output_dir=None, ext_override=None):
     return output_path
 
 
+def _build_extra(args):
+    extra = {}
+    if args.mode == "pixel_palette":
+        extra["palette"] = args.palette
+    elif args.mode == "composite":
+        extra["composite_modes"] = args.composite_modes
+    return extra
+
+
 def convert_image_cli(args):
     print(f"[ToDoT] 이미지 로드: {args.input}")
     img = cv2.imread(args.input, cv2.IMREAD_COLOR)
@@ -66,12 +85,17 @@ def convert_image_cli(args):
         return 1
 
     h, w = img.shape[:2]
-    print(f"[ToDoT] 원본 크기: {w}×{h}")
+    print(f"[ToDoT] 원본 크기: {w}x{h}")
     print(f"[ToDoT] 모드: {args.mode} | 픽셀: {args.pixel_size} | 색상: {args.colors}")
+    if args.mode == "pixel_palette":
+        print(f"[ToDoT] 팔레트: {args.palette}")
+    elif args.mode == "composite":
+        print(f"[ToDoT] 복합 모드: {args.composite_modes}")
 
+    extra = _build_extra(args)
     start = time.time()
     result = convert_single_frame(
-        img, args.mode, args.pixel_size, args.colors, args.grid, args.outline
+        img, args.mode, args.pixel_size, args.colors, args.grid, args.outline, extra
     )
     elapsed = time.time() - start
 
@@ -87,7 +111,7 @@ def convert_image_cli(args):
 
     rh, rw = result.shape[:2]
     print(f"[ToDoT] 변환 완료 ({elapsed:.2f}초)")
-    print(f"[ToDoT] 결과 크기: {rw}×{rh}")
+    print(f"[ToDoT] 결과 크기: {rw}x{rh}")
     print(f"[ToDoT] 저장: {output}")
     return 0
 
@@ -104,12 +128,13 @@ def convert_video_cli(args):
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-    print(f"[ToDoT] 원본: {w}×{h} | {fps:.1f}FPS | {total}프레임")
+    print(f"[ToDoT] 원본: {w}x{h} | {fps:.1f}FPS | {total}프레임")
     print(f"[ToDoT] 모드: {args.mode} | 픽셀: {args.pixel_size} | 색상: {args.colors}")
 
+    extra = _build_extra(args)
     dummy = np.zeros((h, w, 3), dtype=np.uint8)
     test = convert_single_frame(
-        dummy, args.mode, args.pixel_size, args.colors, args.grid, args.outline
+        dummy, args.mode, args.pixel_size, args.colors, args.grid, args.outline, extra
     )
     out_h, out_w = (test.shape[:2]) if test is not None else (h, w)
 
@@ -130,7 +155,7 @@ def convert_video_cli(args):
             break
 
         converted = convert_single_frame(
-            frame, args.mode, args.pixel_size, args.colors, args.grid, args.outline
+            frame, args.mode, args.pixel_size, args.colors, args.grid, args.outline, extra
         )
         if converted is not None:
             writer.write(converted)
@@ -141,7 +166,8 @@ def convert_video_cli(args):
             if pct != last_pct and pct % 5 == 0:
                 elapsed = time.time() - start
                 remaining = (elapsed / max(frame_idx, 1)) * (total - frame_idx)
-                print(f"\r[ToDoT] 진행: {pct}% | 경과: {elapsed:.0f}초 | 남은: ~{remaining:.0f}초", end="", flush=True)
+                print(f"\r[ToDoT] 진행: {pct}% | 경과: {elapsed:.0f}초 | 남은: ~{remaining:.0f}초",
+                      end="", flush=True)
                 last_pct = pct
 
     cap.release()

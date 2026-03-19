@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QTabWidget, QToolBar, QAction, QFileDialog, QStatusBar,
     QProgressBar, QLabel, QSlider, QSpinBox, QCheckBox,
-    QPushButton, QFrame, QMessageBox,
+    QPushButton, QFrame, QMessageBox, QGridLayout,
     QApplication, QInputDialog, QComboBox
 )
 from PyQt5.QtCore import Qt, QSize, QTimer
@@ -27,7 +27,12 @@ from converter import (
     convert_single_frame,
     ImageConvertThread, VideoConvertThread, VideoPreviewThread,
     is_image, is_video, get_supported_filter,
-    IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, MODE_LABELS, MODE_KEYS
+    IMAGE_EXTENSIONS, VIDEO_EXTENSIONS,
+    CATEGORIES, CATEGORY_KEYS, CATEGORY_LABELS,
+    PIXEL_MODES, ASCII_MODES, CHAR_MODES, ART_MODES, SUBMODES_BY_CATEGORY,
+    ALL_MODES, ALL_MODE_KEYS, ALL_MODE_LABELS,
+    MODE_KEYS, MODE_LABELS,
+    PALETTE_NAMES,
 )
 from styles import get_theme_stylesheet
 from canvas_widget import DrawingCanvas, CanvasToolbar
@@ -72,7 +77,7 @@ class MainWindow(QMainWindow):
         self._video_preview_timer.setInterval(600)
         self._video_preview_timer.timeout.connect(self._generate_video_preview)
 
-        self.setWindowTitle("ToDoT – 도트 이미지 변환기")
+        self.setWindowTitle("ToDoT - 도트 이미지 변환기")
         self.setMinimumSize(1100, 700)
         self.resize(1300, 820)
 
@@ -192,85 +197,150 @@ class MainWindow(QMainWindow):
 
         self.tab_widget.addTab(video_container, "🎬 동영상 미리보기")
 
+    # ─── Convert panel (2 rows) ───
+
     def _setup_convert_panel(self):
         self.convert_panel = QFrame()
         self.convert_panel.setObjectName("convertPanel")
-        self.convert_panel.setFixedHeight(85)
-        layout = QHBoxLayout(self.convert_panel)
-        layout.setContentsMargins(16, 8, 16, 8)
-        layout.setSpacing(12)
+        self.convert_panel.setFixedHeight(115)
 
-        layout.addWidget(QLabel("모드:"))
-        self.mode_combo = QComboBox()
-        self.mode_combo.addItems(MODE_LABELS)
-        self.mode_combo.setFixedWidth(160)
-        self.mode_combo.setToolTip("변환 모드를 선택합니다")
-        self.mode_combo.currentIndexChanged.connect(self._on_param_changed)
-        layout.addWidget(self.mode_combo)
+        outer = QVBoxLayout(self.convert_panel)
+        outer.setContentsMargins(16, 6, 16, 6)
+        outer.setSpacing(4)
 
-        sep1 = QFrame()
-        sep1.setFrameShape(QFrame.VLine)
-        sep1.setFixedWidth(1)
-        layout.addWidget(sep1)
+        # Row 1: category + sub-mode + composite selectors + palette
+        row1 = QHBoxLayout()
+        row1.setSpacing(10)
 
-        layout.addWidget(QLabel("픽셀 크기:"))
+        row1.addWidget(QLabel("카테고리:"))
+        self.category_combo = QComboBox()
+        self.category_combo.addItems(CATEGORY_LABELS)
+        self.category_combo.setFixedWidth(130)
+        self.category_combo.setToolTip("변환 카테고리 선택")
+        self.category_combo.currentIndexChanged.connect(self._on_category_changed)
+        row1.addWidget(self.category_combo)
+
+        self._sub_mode_label = QLabel("모드:")
+        row1.addWidget(self._sub_mode_label)
+        self.sub_mode_combo = QComboBox()
+        self.sub_mode_combo.setFixedWidth(190)
+        self.sub_mode_combo.setToolTip("세부 변환 모드 선택")
+        self.sub_mode_combo.currentIndexChanged.connect(self._on_sub_mode_changed)
+        row1.addWidget(self.sub_mode_combo)
+
+        # Palette selector (only for pixel_palette)
+        self._palette_label = QLabel("팔레트:")
+        self._palette_label.setVisible(False)
+        row1.addWidget(self._palette_label)
+        self.palette_combo = QComboBox()
+        self.palette_combo.addItems(PALETTE_NAMES)
+        self.palette_combo.setFixedWidth(130)
+        self.palette_combo.setToolTip("사전 정의 컬러 팔레트")
+        self.palette_combo.setVisible(False)
+        self.palette_combo.currentIndexChanged.connect(self._on_param_changed)
+        row1.addWidget(self.palette_combo)
+
+        # Composite mode selectors (hidden by default)
+        self._composite_widget = QWidget()
+        comp_layout = QHBoxLayout(self._composite_widget)
+        comp_layout.setContentsMargins(0, 0, 0, 0)
+        comp_layout.setSpacing(8)
+
+        self._comp_combos = []
+        comp_positions = ["우상단", "좌하단", "우하단"]
+        comp_defaults = [0, 2, 6]  # pixel, ascii, hangul by index in ALL_MODES
+        for i, pos in enumerate(comp_positions):
+            comp_layout.addWidget(QLabel(f"{pos}:"))
+            combo = QComboBox()
+            combo.addItems(ALL_MODE_LABELS)
+            combo.setFixedWidth(160)
+            combo.setToolTip(f"복합 모드 {pos} 패널의 변환 모드")
+            if i < len(comp_defaults):
+                combo.setCurrentIndex(comp_defaults[i])
+            combo.currentIndexChanged.connect(self._on_param_changed)
+            comp_layout.addWidget(combo)
+            self._comp_combos.append(combo)
+
+        self._composite_widget.setVisible(False)
+        row1.addWidget(self._composite_widget)
+
+        row1.addStretch()
+        outer.addLayout(row1)
+
+        # Row 2: parameters + action buttons
+        row2 = QHBoxLayout()
+        row2.setSpacing(10)
+
+        row2.addWidget(QLabel("크기:"))
         self.pixel_size_slider = QSlider(Qt.Horizontal)
         self.pixel_size_slider.setRange(2, 32)
         self.pixel_size_slider.setValue(self.config.get("pixel_size", 8))
         self.pixel_size_slider.setFixedWidth(120)
         self.pixel_size_slider.setToolTip("하나의 도트 블록 크기 (클수록 더 큰 도트)")
         self.pixel_size_slider.valueChanged.connect(self._on_param_changed)
-        layout.addWidget(self.pixel_size_slider)
+        row2.addWidget(self.pixel_size_slider)
         self.pixel_size_label = QLabel(str(self.config.get("pixel_size", 8)))
         self.pixel_size_label.setFixedWidth(24)
         self.pixel_size_label.setObjectName("accentLabel")
-        layout.addWidget(self.pixel_size_label)
+        row2.addWidget(self.pixel_size_label)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setFixedWidth(1)
+        row2.addWidget(sep)
 
         self.color_label = QLabel("색상:")
-        layout.addWidget(self.color_label)
+        row2.addWidget(self.color_label)
         self.color_spin = QSpinBox()
         self.color_spin.setRange(2, 256)
         self.color_spin.setValue(self.config.get("num_colors", 16))
         self.color_spin.setFixedWidth(72)
-        self.color_spin.setToolTip("사용할 색상 팔레트 크기 (도트 모드 전용)")
+        self.color_spin.setToolTip("사용할 색상 팔레트 크기")
         self.color_spin.valueChanged.connect(self._on_param_changed)
-        layout.addWidget(self.color_spin)
+        row2.addWidget(self.color_spin)
 
         self.grid_check = QCheckBox("격자")
         self.grid_check.setChecked(self.config.get("grid_lines", False))
         self.grid_check.setToolTip("도트 사이에 격자선을 표시합니다")
         self.grid_check.stateChanged.connect(self._on_param_changed)
-        layout.addWidget(self.grid_check)
+        row2.addWidget(self.grid_check)
 
         self.outline_check = QCheckBox("윤곽선")
         self.outline_check.setChecked(self.config.get("outline", False))
-        self.outline_check.setToolTip("윤곽선을 강조합니다")
+        self.outline_check.setToolTip("윤곽선을 강조합니다 (K-means 전용)")
         self.outline_check.stateChanged.connect(self._on_param_changed)
-        layout.addWidget(self.outline_check)
+        row2.addWidget(self.outline_check)
 
-        layout.addStretch()
+        row2.addStretch()
 
         self.cancel_btn = QPushButton("✕ 취소")
-        self.cancel_btn.setFixedSize(80, 44)
+        self.cancel_btn.setFixedSize(80, 36)
         self.cancel_btn.setObjectName("dangerBtn")
         self.cancel_btn.setToolTip("진행 중인 변환을 취소합니다")
         self.cancel_btn.setVisible(False)
         self.cancel_btn.clicked.connect(self._cancel_convert)
-        layout.addWidget(self.cancel_btn)
+        row2.addWidget(self.cancel_btn)
 
         self.convert_btn = QPushButton("⚡ 변환하기")
-        self.convert_btn.setFixedSize(130, 44)
+        self.convert_btn.setFixedSize(120, 36)
         self.convert_btn.setToolTip("원본 해상도로 최종 변환합니다")
         self.convert_btn.clicked.connect(self._convert)
-        layout.addWidget(self.convert_btn)
+        row2.addWidget(self.convert_btn)
 
         self.save_btn = QPushButton("💾 저장")
-        self.save_btn.setFixedSize(90, 44)
+        self.save_btn.setFixedSize(80, 36)
         self.save_btn.setObjectName("secondaryBtn")
         self.save_btn.setToolTip("변환 결과를 출력 폴더에 저장합니다 (Ctrl+S)")
         self.save_btn.setEnabled(False)
         self.save_btn.clicked.connect(self._save_result)
-        layout.addWidget(self.save_btn)
+        row2.addWidget(self.save_btn)
+
+        outer.addLayout(row2)
+
+        # Initialize sub-mode list for default category
+        self._on_category_changed(0)
+
+    # ─── Menu / Toolbar / Statusbar ───
 
     def _setup_menubar(self):
         menubar = self.menuBar()
@@ -393,16 +463,91 @@ class MainWindow(QMainWindow):
             prog.setRange(0, 100)
             prog.setValue(value)
 
+    # ─── Category / sub-mode logic ───
+
+    def _on_category_changed(self, idx):
+        cat_key = CATEGORY_KEYS[idx] if 0 <= idx < len(CATEGORY_KEYS) else "pixel"
+        is_composite = (cat_key == "composite")
+
+        self._sub_mode_label.setVisible(not is_composite)
+        self.sub_mode_combo.setVisible(not is_composite)
+        self._composite_widget.setVisible(is_composite)
+
+        if not is_composite:
+            modes = SUBMODES_BY_CATEGORY.get(cat_key, PIXEL_MODES)
+            self.sub_mode_combo.blockSignals(True)
+            self.sub_mode_combo.clear()
+            self.sub_mode_combo.addItems([m[1] for m in modes])
+            self.sub_mode_combo.blockSignals(False)
+            self._on_sub_mode_changed(0)
+        else:
+            self._update_param_visibility()
+            self._on_param_changed()
+
+    def _on_sub_mode_changed(self, _idx=0):
+        self._update_param_visibility()
+        self._on_param_changed()
+
+    def _update_param_visibility(self):
+        mode = self._get_convert_mode()
+        cat_key = self._get_category_key()
+
+        is_pixel_cat = (cat_key == "pixel")
+        needs_colors = mode in ("pixel", "pixel_dither", "pixel_edge", "pixel_superpixel")
+        needs_outline = (mode == "pixel")
+        is_palette = (mode == "pixel_palette")
+        is_art = (cat_key == "art")
+
+        self.color_spin.setEnabled(needs_colors)
+        self.color_label.setEnabled(needs_colors)
+        self.grid_check.setEnabled(is_pixel_cat)
+        self.outline_check.setEnabled(needs_outline)
+
+        self._palette_label.setVisible(is_palette)
+        self.palette_combo.setVisible(is_palette)
+
+        if is_art:
+            self.color_spin.setEnabled(False)
+            self.color_label.setEnabled(False)
+            self.grid_check.setEnabled(False)
+            self.outline_check.setEnabled(False)
+
+    def _get_category_key(self):
+        idx = self.category_combo.currentIndex()
+        if 0 <= idx < len(CATEGORY_KEYS):
+            return CATEGORY_KEYS[idx]
+        return "pixel"
+
+    def _get_convert_mode(self):
+        cat_key = self._get_category_key()
+        if cat_key == "composite":
+            return "composite"
+        modes = SUBMODES_BY_CATEGORY.get(cat_key, PIXEL_MODES)
+        idx = self.sub_mode_combo.currentIndex()
+        if 0 <= idx < len(modes):
+            return modes[idx][0]
+        return "pixel"
+
+    def _get_extra(self):
+        extra = {}
+        mode = self._get_convert_mode()
+        if mode == "pixel_palette":
+            extra["palette"] = self.palette_combo.currentText()
+        elif mode == "composite":
+            comp_modes = []
+            for combo in self._comp_combos:
+                ci = combo.currentIndex()
+                if 0 <= ci < len(ALL_MODE_KEYS):
+                    comp_modes.append(ALL_MODE_KEYS[ci])
+                else:
+                    comp_modes.append("pixel")
+            extra["composite_modes"] = comp_modes
+        return extra
+
     # ─── Live preview ───
 
     def _on_param_changed(self, _=None):
         self.pixel_size_label.setText(str(self.pixel_size_slider.value()))
-
-        is_pixel = self._get_convert_mode() == "pixel"
-        self.color_spin.setEnabled(is_pixel)
-        self.color_label.setEnabled(is_pixel)
-        self.grid_check.setEnabled(is_pixel)
-        self.outline_check.setEnabled(is_pixel)
 
         if self.current_image is not None and self.current_mode in ("image", "canvas"):
             self._live_timer.start()
@@ -422,13 +567,14 @@ class MainWindow(QMainWindow):
 
         params = self._get_params()
         mode = self._get_convert_mode()
+        extra = self._get_extra()
 
         if hasattr(self, '_live_worker') and self._live_worker and self._live_worker.isRunning():
             return
 
         self._live_worker = ImageConvertThread(
             preview_img, params["pixel_size"], params["num_colors"],
-            params["grid"], params["outline"], mode
+            params["grid"], params["outline"], mode, extra
         )
         self._live_worker.finished.connect(self._on_live_preview_done)
         self._live_worker.error.connect(lambda msg: self.status_label.setText(f"미리보기 오류: {msg[:60]}"))
@@ -453,12 +599,14 @@ class MainWindow(QMainWindow):
 
         params = self._get_params()
         mode = self._get_convert_mode()
+        extra = self._get_extra()
         self.status_label.setText("동영상 5초 미리보기 생성 중...")
 
         self._preview_thread = VideoPreviewThread(
             self.current_video_path,
             params["pixel_size"], params["num_colors"],
-            params["grid"], params["outline"], mode, duration=5.0
+            params["grid"], params["outline"], mode, duration=5.0,
+            extra=extra,
         )
         thread_id = id(self._preview_thread)
 
@@ -487,7 +635,7 @@ class MainWindow(QMainWindow):
         self.drawing_canvas.set_canvas_size(width, height)
         self.current_mode = "canvas"
         self.tab_widget.setCurrentIndex(1)
-        self.status_label.setText(f"새 캔버스 ({width}×{height})")
+        self.status_label.setText(f"새 캔버스 ({width}x{height})")
 
     def _open_file(self):
         last_dir = self.config.get("last_open_dir", "")
@@ -528,7 +676,7 @@ class MainWindow(QMainWindow):
 
         self.tab_widget.setCurrentIndex(0)
         h, w = img.shape[:2]
-        self.status_label.setText(f"이미지 로드: {os.path.basename(path)} ({w}×{h})")
+        self.status_label.setText(f"이미지 로드: {os.path.basename(path)} ({w}x{h})")
         self._live_timer.start()
 
     def _load_video(self, path):
@@ -572,7 +720,7 @@ class MainWindow(QMainWindow):
             img = cv2.imread(path, cv2.IMREAD_COLOR)
             if img is not None:
                 h, w = img.shape[:2]
-                self.status_label.setText(f"선택: {os.path.basename(path)} ({w}×{h})")
+                self.status_label.setText(f"선택: {os.path.basename(path)} ({w}x{h})")
 
     # ─── Conversion ───
 
@@ -583,12 +731,6 @@ class MainWindow(QMainWindow):
             "grid": self.grid_check.isChecked(),
             "outline": self.outline_check.isChecked(),
         }
-
-    def _get_convert_mode(self):
-        idx = self.mode_combo.currentIndex()
-        if 0 <= idx < len(MODE_KEYS):
-            return MODE_KEYS[idx]
-        return "pixel"
 
     def _convert(self):
         tab_idx = self.tab_widget.currentIndex()
@@ -605,6 +747,7 @@ class MainWindow(QMainWindow):
             return
         params = self._get_params()
         mode = self._get_convert_mode()
+        extra = self._get_extra()
         self.status_label.setText("이미지 변환 중...")
         self.convert_btn.setEnabled(False)
         QApplication.processEvents()
@@ -612,7 +755,7 @@ class MainWindow(QMainWindow):
         self._convert_thread = ImageConvertThread(
             self.current_image.copy(),
             params["pixel_size"], params["num_colors"],
-            params["grid"], params["outline"], mode
+            params["grid"], params["outline"], mode, extra
         )
         self._convert_thread.finished.connect(self._on_image_converted)
         self._convert_thread.error.connect(self._on_convert_error)
@@ -628,13 +771,14 @@ class MainWindow(QMainWindow):
 
         params = self._get_params()
         mode = self._get_convert_mode()
+        extra = self._get_extra()
         self.status_label.setText("캔버스 그림 변환 중...")
         self.convert_btn.setEnabled(False)
 
         self._convert_thread = ImageConvertThread(
             img.copy(),
             params["pixel_size"], params["num_colors"],
-            params["grid"], params["outline"], mode
+            params["grid"], params["outline"], mode, extra
         )
         self._convert_thread.finished.connect(self._on_canvas_converted)
         self._convert_thread.error.connect(self._on_convert_error)
@@ -662,6 +806,7 @@ class MainWindow(QMainWindow):
             return
         params = self._get_params()
         mode = self._get_convert_mode()
+        extra = self._get_extra()
         output_dir = self.config.get("output_dir", os.path.join(get_base_dir(), "output"))
         os.makedirs(output_dir, exist_ok=True)
 
@@ -686,7 +831,7 @@ class MainWindow(QMainWindow):
         self._convert_thread = VideoConvertThread(
             self.current_video_path, output_path,
             params["pixel_size"], params["num_colors"],
-            params["grid"], params["outline"], mode
+            params["grid"], params["outline"], mode, extra
         )
         self._convert_thread.progress.connect(self._on_video_progress)
         self._convert_thread.frame_converted.connect(self._on_video_frame_preview)
@@ -812,10 +957,13 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self, "ToDoT 정보",
             "<h2>ToDoT</h2>"
-            "<p>이미지와 동영상을 도트/ASCII/한글/유니코드 아트로 변환</p>"
-            "<p>버전 1.2.0</p>"
+            "<p>이미지와 동영상을 다양한 아트 스타일로 변환</p>"
+            "<p>버전 2.0.0</p>"
             "<hr>"
-            "<p><b>변환 모드:</b> 도트, ASCII, 한글, 유니코드 (컬러/흑백)</p>"
+            "<p><b>픽셀 변환:</b> K-means, 디더링, 팔레트, NN, Edge-preserving, 슈퍼픽셀</p>"
+            "<p><b>문자 아트:</b> ASCII, 한글, 유니코드 (컬러/흑백)</p>"
+            "<p><b>아트 효과:</b> 하프톤, 만화, 보로노이, 로우폴리, 점묘화, 글리치</p>"
+            "<p><b>복합 모드:</b> 4분할 합성</p>"
             f"<p><b>이미지:</b> {', '.join(sorted(e.upper() for e in IMAGE_EXTENSIONS))}</p>"
             f"<p><b>동영상:</b> {', '.join(sorted(e.upper() for e in VIDEO_EXTENSIONS))}</p>"
             "<p><b>CLI:</b> python src/cli.py --help</p>"
