@@ -1,0 +1,38 @@
+# ─── Python ───
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# ─── Virtual Environment ───
+venv/
+.venv/
+env/
+
+# ─── PyInstaller ───
+build/
+dist/
+*.spec
+
+# ─── IDE ───
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.cursor/
+
+# ─── OS ───
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+
+# ─── Runtime generated ───
+config.json
+history.json
+output/
+tmp/
+
+# ─── Agent/Review artifacts ───
+UX_REVIEW.md
